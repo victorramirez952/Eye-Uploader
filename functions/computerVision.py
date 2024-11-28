@@ -80,7 +80,6 @@ def save_image_from_array(img_array, save_path, file_name, hash):
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     img_array.save(os.path.join(save_path, file_name))
-    print(f"Imagen guardada en {os.path.join(save_path, file_name)}")
     fileName = "masks/{}.png".format(hash)
     bucket = storage.bucket()
     blob = bucket.blob(fileName)
@@ -152,9 +151,6 @@ def measure(img_array):
 
     distance2 = np.sqrt((points2[0][0] - points2[1][0])**2 + (points2[0][1] - points2[1][1])**2)
 
-    print(f'Diámetro: {round(distance / conversion_factor, 2)} mm')
-    print(f'Grosor: {round(distance2 / conversion_factor, 2)} mm')
-
     return round(distance2 / conversion_factor, 2)
 
 # Get echogenicity
@@ -182,7 +178,6 @@ def predict_class(og, mask):
   else:
       class_result = 'Hipo-ecogénico'
 
-  print(f"Lesion intensity:{LESION_INTENSITY}\tRetina intensity:{RETINA_INTENSITY}")
   print(f"PRED:{class_result}")
 
   return class_result

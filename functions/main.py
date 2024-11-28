@@ -52,7 +52,7 @@ def computer_vision(hash: str):
     vision = {"mask": maskInfo["mask_url"], "overlay": maskInfo["overlay_url"], "width": thickness, "echogenicity": pred_class}
     return vision
 
-def getImage(fileroute: str):
+def getImages(fileroute: str):
     try:
         # Create a PdfDocument instance
         pdf = PdfDocument()
@@ -63,27 +63,40 @@ def getImage(fileroute: str):
         # Create a PdfImageHelper instance
         imageHelper = PdfImageHelper()
         
-        # Get the current page
-        page = pdf.Pages.get_Item(0)
+        # Get number of pages
+        pageCount = pdf.Pages.Count
         
-        # Get the image information of the page
-        imageInfo = imageHelper.GetImagesInfo(page)
+        images = []
+        imageIndex = 0
         
-        imageInfo[1].Image.Save(f"images/image.png")
-        
-        # Save image to bucket
-        with open("images/image.png", "rb") as f:
-            hash = hashlib.sha256(f.read()).hexdigest()
-        fileName = "images/{}.png".format(hash)
-        bucket = storage.bucket()
-        blob = bucket.blob(fileName)
-        blob.upload_from_filename("images/image.png")
+        for i in range(pageCount):
+            # Get the current page
+            page = pdf.Pages.get_Item(i)
+            
+            # Get the image information of the page
+            imageInfo = imageHelper.GetImagesInfo(page)
+            
+            # Get number of images
+            imageCount = len(imageInfo)
+            for j in range(imageCount):
+                imageInfo[j].Image.Save(f"tempImages/image{imageIndex}.png")
+                
+                # Save image to bucket
+                with open("tempImages/image{}.png".format(imageIndex), "rb") as f:
+                    hash = hashlib.sha256(f.read()).hexdigest()
+                fileName = "tempImages/{}.png".format(hash)
+                bucket = storage.bucket()
+                blob = bucket.blob(fileName)
+                blob.upload_from_filename(f"tempImages/image{imageIndex}.png")
 
-        # Opt : if you want to make public access from the URL
-        blob.make_public()
-        public_url = blob.public_url
+                # Opt : if you want to make public access from the URL
+                blob.make_public()
+                public_url = blob.public_url
 
-        return {"hash": hash, "url": public_url}
+                images.append(public_url)
+                imageIndex += 1
+
+        return images
         
     except Exception as e:
         print(f"Error processing request: {str(e)}")
@@ -95,6 +108,25 @@ def uploadResults(data: dict, hash: str):
         doc_ref.set(data)
     except Exception as e:
         print(f"Error uploading results: {str(e)}")
+        
+# HTTP function that receives a body
+@https_fn.on_request(cors=options.CorsOptions(
+        cors_origins=["*"],
+        cors_methods=["get", "post"],
+    ))
+def receive_pdf(req: https_fn.Request) -> https_fn.Response:
+    try:
+        body_data = req.get_data().decode('utf-8').strip() 
+        # Get the body data as bytes and decode it to a string
+        body_json = json.loads(body_data)
+        image_link = body_json.get("link", "No image link provided")
+        image = requests.get(image_link)
+        open("pdfs/image.pdf", "wb").write(image.content)
+        return json.dumps(getImages("pdfs/image.pdf"))
+    except Exception as e:
+        # Handle any errors that occur
+        print(f"Error processing request: {str(e)}")
+        return https_fn.Response(f"Error processing request: {str(e)}", status=400)
 
 # HTTP function that receives a body
 @https_fn.on_request(cors=options.CorsOptions(
@@ -103,21 +135,19 @@ def uploadResults(data: dict, hash: str):
     ))
 def receive_image(req: https_fn.Request) -> https_fn.Response:
     try:
+        body_data = req.get_data().decode('utf-8').strip() 
         # Get the body data as bytes and decode it to a string
-        body_data = req.get_data().decode('utf-8')
         body_json = json.loads(body_data)
         image_link = body_json.get("link", "No image link provided")
-        image = requests.get(image_link)
-        open("pdfs/image.pdf", "wb").write(image.content)
-        imageInformation = getImage("pdfs/image.pdf")
-        checkIfExists = db.collection(u'results').document(imageInformation["hash"]).get()
-        print("Check if exists", checkIfExists)
+        image = requests.get(body_json["link"])
+        open("images/image.png", "wb").write(image.content)
+        hash = hashlib.sha256(image.content).hexdigest()
+        checkIfExists = db.collection(u'results').document(hash).get()
         if checkIfExists.exists:
             return https_fn.Response(response=json.dumps(checkIfExists.to_dict()), status=200)
-        vision = computer_vision(imageInformation["hash"])
-        body = {"image": imageInformation["url"], "mask": vision["mask"], "overlay": vision["overlay"], "pdf": image_link, "width": vision["width"], "echogenicity": vision["echogenicity"]}
-        print(body)
-        uploadResults(body, imageInformation["hash"])
+        vision = computer_vision(hash)
+        body = {"image": image_link, "mask": vision["mask"], "overlay": vision["overlay"], "width": vision["width"], "echogenicity": vision["echogenicity"]}
+        uploadResults(body, hash)
         json_body = json.dumps(body)
         
         return https_fn.Response(response=json_body, status=200)

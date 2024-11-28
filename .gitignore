@@ -76,9 +76,13 @@ venv/
 
 # images
 functions/images/*
+functions/tempImages/*
 
 # pdfs
 functions/pdfs/*
 
 # keras model
 model.keras
+
+# python cache
+__pycache__/
