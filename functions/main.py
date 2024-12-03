@@ -145,8 +145,14 @@ def receive_image(req: https_fn.Request) -> https_fn.Response:
         checkIfExists = db.collection(u'results').document(hash).get()
         if checkIfExists.exists:
             return https_fn.Response(response=json.dumps(checkIfExists.to_dict()), status=200)
+        fileName = "images/{}.png".format(hash)
+        bucket = storage.bucket()
+        blob = bucket.blob(fileName)
+        blob.upload_from_filename("images/image.png")
+        blob.make_public()
+        public_url = blob.public_url
         vision = computer_vision(hash)
-        body = {"image": image_link, "mask": vision["mask"], "overlay": vision["overlay"], "width": vision["width"], "echogenicity": vision["echogenicity"]}
+        body = {"image": public_url, "mask": vision["mask"], "overlay": vision["overlay"], "width": vision["width"], "echogenicity": vision["echogenicity"]}
         uploadResults(body, hash)
         json_body = json.dumps(body)
         
