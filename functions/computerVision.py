@@ -1,6 +1,4 @@
 from PIL import Image, ImageFilter # Para el resizing
-from tensorflow.keras.utils import load_img, img_to_array
-from tensorflow.keras.models import load_model
 # Optimizador
 from scipy.ndimage.measurements import mean
 import numpy as np
@@ -15,12 +13,18 @@ import math
 # FUNCIONES
 # en load_keras_model() cambiar el path al modelo .keras
 def load_keras_model():
+    # Lazy load TensorFlow imports
+    from tensorflow.keras.models import load_model
+    
     global model
     print("* Loading model...")
     model = load_model('./keras/model.keras', compile=False)
     print("* Model loaded")
     
 def prepare_image(path):
+    # Lazy load TensorFlow imports
+    from tensorflow.keras.utils import load_img, img_to_array
+    
     img = img_to_array(load_img(path, target_size=(80, 128), color_mode="grayscale"))
     img = img / 255.0
     img = np.expand_dims(img, axis=0)
@@ -33,6 +37,11 @@ def predict(img):
 def get_overlay(hash):
     original = cv2.imread("images/image.png")
     mask = cv2.imread("images/masked.png", cv2.IMREAD_GRAYSCALE)  # Read the mask as grayscale
+    
+    # Fix: Resize mask to match original image dimensions
+    if mask.shape[:2] != original.shape[:2]:
+        mask = cv2.resize(mask, (original.shape[1], original.shape[0]), interpolation=cv2.INTER_NEAREST)
+    
     roi = cv2.bitwise_or(original, cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR))  # Convert mask for bitwise OR
     img1_color = original
 
@@ -79,6 +88,8 @@ def resize_and_smooth(img_array):
 def save_image_from_array(img_array, save_path, file_name, hash):
     if not os.path.exists(save_path):
         os.makedirs(save_path)
+    if not os.path.exists("masks"):
+        os.makedirs("masks")
     img_array.save(os.path.join(save_path, file_name))
     fileName = "masks/{}.png".format(hash)
     bucket = storage.bucket()

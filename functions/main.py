@@ -13,7 +13,6 @@ import numpy as np
 import os
 import random
 from PIL import Image, ImageFilter # Para el resizing
-import tensorflow as tf
 from computerVision import load_keras_model, prepare_image, predict, resize_and_smooth, save_image_from_array, measure, predict_class
 
 import sys
@@ -21,16 +20,21 @@ sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
 cred = credentials.Certificate("./firebaseConfig.json")
-initialize_app(cred, {'storageBucket': 'mmy-app-e9474.firebasestorage.app'})
+initialize_app(cred, {'storageBucket': 'eci-ot25.firebasestorage.app'})
 db = firestore.client()
 
-os.environ["ULTRASOUND"] = str(39)
-np.random.seed(39) # Set seed. Now any random operation using NumPy will produce the same result
-tf.random.set_seed(39) # # Now any random operation using TensorFlow will produce the same result
-random.seed(39) # Now any random operation using the random module will produce the same result
-
 def computer_vision(hash: str):
+    # Lazy load TensorFlow and set seeds only when needed
+    import tensorflow as tf
+    
+    os.environ["ULTRASOUND"] = str(39)
+    np.random.seed(39) # Set seed. Now any random operation using NumPy will produce the same result
+    tf.random.set_seed(39) # # Now any random operation using TensorFlow will produce the same result
+    random.seed(39) # Now any random operation using the random module will produce the same result
+    
     load_keras_model()
+    # Create images directory if not exist
+    os.makedirs("images", exist_ok=True)
     path = './images/image.png'
     # Cargar img original
     og = cv2.imread(path)
@@ -41,19 +45,26 @@ def computer_vision(hash: str):
     # Resize y smooth de pred
     image = resize_and_smooth(pred) # resize
     mask = np.asarray(image)
-    # Guardar mask bonita
+    
+    # Resize mask to match original image dimensions for analysis
+    mask_resized = cv2.resize(mask, (og.shape[1], og.shape[0]), interpolation=cv2.INTER_NEAREST)
+    
+    # Guardar mask bonita (keep the high-res version for storage)
     maskInfo = save_image_from_array(image, "./images/", 'masked.png', hash)
     
-    # Medir
+    # Medir (use high-res mask for accurate measurements)
     thickness = measure(mask)
-    # Clasificar
-    pred_class = predict_class(og, mask)
+    # Clasificar (use resized mask that matches original image dimensions)
+    pred_class = predict_class(og, mask_resized)
     
     vision = {"mask": maskInfo["mask_url"], "overlay": maskInfo["overlay_url"], "width": thickness, "echogenicity": pred_class}
     return vision
 
 def getImages(fileroute: str):
     try:
+        # Create tempImages directory if it doesn't exist
+        os.makedirs("tempImages", exist_ok=True)
+        
         # Create a PdfDocument instance
         pdf = PdfDocument()
         
@@ -95,7 +106,6 @@ def getImages(fileroute: str):
 
                 images.append(public_url)
                 imageIndex += 1
-
         return images
         
     except Exception as e:
@@ -121,6 +131,8 @@ def receive_pdf(req: https_fn.Request) -> https_fn.Response:
         body_json = json.loads(body_data)
         image_link = body_json.get("link", "No image link provided")
         image = requests.get(image_link)
+        # Get pdfs directory if not exist
+        os.makedirs("pdfs", exist_ok=True)
         open("pdfs/image.pdf", "wb").write(image.content)
         return json.dumps(getImages("pdfs/image.pdf"))
     except Exception as e:
@@ -138,8 +150,8 @@ def receive_image(req: https_fn.Request) -> https_fn.Response:
         body_data = req.get_data().decode('utf-8').strip() 
         # Get the body data as bytes and decode it to a string
         body_json = json.loads(body_data)
-        image_link = body_json.get("link", "No image link provided")
         image = requests.get(body_json["link"])
+        os.makedirs("images", exist_ok=True)
         open("images/image.png", "wb").write(image.content)
         hash = hashlib.sha256(image.content).hexdigest()
         checkIfExists = db.collection(u'results').document(hash).get()
@@ -161,3 +173,32 @@ def receive_image(req: https_fn.Request) -> https_fn.Response:
         # Handle any errors that occur
         print(f"Error processing request: {str(e)}")
         return https_fn.Response(f"Error processing request: {str(e)}", status=400)
+
+# Test endpoint to check Python version
+@https_fn.on_request()
+def python_version_eye_uploader(req: https_fn.Request) -> https_fn.Response:
+    return https_fn.Response(f"Hello world\nPython version: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+
+# Test endpoint to verify TensorFlow import and version
+@https_fn.on_request(cors=options.CorsOptions(
+        cors_origins=["*"],
+        cors_methods=["get", "post"],
+    ))
+def test_tensorflow(req: https_fn.Request) -> https_fn.Response:
+    try:
+        import tensorflow as tf
+        version = tf.__version__
+        print(f"TensorFlow version: {version}")
+        response_data = {
+            "status": "success",
+            "tensorflow_version": version,
+            "message": f"TensorFlow successfully imported. Version: {version}"
+        }
+        return https_fn.Response(response=json.dumps(response_data), status=200)
+    except Exception as e:
+        print(f"Error importing TensorFlow: {str(e)}")
+        error_data = {
+            "status": "error",
+            "message": f"Failed to import TensorFlow: {str(e)}"
+        }
+        return https_fn.Response(response=json.dumps(error_data), status=500)
