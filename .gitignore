@@ -78,16 +78,20 @@ venv/
 # images
 functions/images/*
 functions/tempImages/*
+functions/masks/*
 
 # pdfs
 functions/pdfs/*
 
 # keras model
 model.keras
+keras_models/
 
 # python cache
 __pycache__/
 
-Requirements.md
+Requirements*.md
 
 .vscode/
+.github/
+test/

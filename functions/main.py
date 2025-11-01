@@ -11,6 +11,7 @@ import hashlib
 import cv2
 import numpy as np
 import os
+import shutil
 import random
 from PIL import Image, ImageFilter # Para el resizing
 from computerVision import load_keras_model, prepare_image, predict, resize_and_smooth, save_image_from_array, measure, predict_class
@@ -19,7 +20,8 @@ import sys
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
-cred = credentials.Certificate("./firebaseConfig.json")
+# cred = credentials.Certificate("./firebaseConfig.json")
+cred = credentials.Certificate("C:\\Users\\jairr\\Documents\\UDEM\\9noSemestre\\PEF\\EYE_UPLOADER\\functions\\firebaseConfig.json")
 initialize_app(cred, {'storageBucket': 'eci-ot25.firebasestorage.app'})
 db = firestore.client()
 
@@ -62,6 +64,9 @@ def computer_vision(hash: str):
 
 def getImages(fileroute: str):
     try:
+        # Clean up tempImages directory if it exists
+        if os.path.exists("tempImages"):
+            shutil.rmtree("tempImages")
         # Create tempImages directory if it doesn't exist
         os.makedirs("tempImages", exist_ok=True)
         
@@ -77,9 +82,9 @@ def getImages(fileroute: str):
         # Get number of pages
         pageCount = pdf.Pages.Count
         
-        images = []
         imageIndex = 0
         
+        # Extract all images from PDF to disk
         for i in range(pageCount):
             # Get the current page
             page = pdf.Pages.get_Item(i)
@@ -91,26 +96,48 @@ def getImages(fileroute: str):
             imageCount = len(imageInfo)
             for j in range(imageCount):
                 imageInfo[j].Image.Save(f"tempImages/image{imageIndex}.png")
-                
-                # Save image to bucket
-                with open("tempImages/image{}.png".format(imageIndex), "rb") as f:
+                imageIndex += 1
+        
+        print(f"Extracted {imageIndex} images from PDF")
+        
+        # Call image_classifier to get Affected Eye images
+        from image_classifier.image_classifier import classify_directory
+        affected_eye_images = classify_directory("tempImages")
+        
+        print(f"Affected Eye images: {len(affected_eye_images)}")
+        
+        # Upload only Affected Eye images to Firebase Storage
+        upload_urls = []
+        for image_path in affected_eye_images:
+            try:
+                with open(image_path, "rb") as f:
                     hash = hashlib.sha256(f.read()).hexdigest()
+                
                 fileName = "tempImages/{}.png".format(hash)
                 bucket = storage.bucket()
                 blob = bucket.blob(fileName)
-                blob.upload_from_filename(f"tempImages/image{imageIndex}.png")
+                blob.content_type = 'image/png'
+                blob.upload_from_filename(image_path)
 
-                # Opt : if you want to make public access from the URL
+                # Make public access from the URL
                 blob.make_public()
                 public_url = blob.public_url
 
-                images.append(public_url)
-                imageIndex += 1
-        return images
+                upload_urls.append(public_url)
+            except Exception as e:
+                print(f"Error uploading image {image_path}: {str(e)}")
+        
+        # Clean up tempImages directory
+        shutil.rmtree("tempImages")
+        
+        return upload_urls
         
     except Exception as e:
         print(f"Error processing request: {str(e)}")
-        return ""
+        # Clean up in case of error
+        if os.path.exists("tempImages"):
+            shutil.rmtree("tempImages")
+        return []
     
 def uploadResults(data: dict, hash: str):
     try:
@@ -160,6 +187,7 @@ def receive_image(req: https_fn.Request) -> https_fn.Response:
         fileName = "images/{}.png".format(hash)
         bucket = storage.bucket()
         blob = bucket.blob(fileName)
+        blob.content_type = 'image/png'
         blob.upload_from_filename("images/image.png")
         blob.make_public()
         public_url = blob.public_url
@@ -174,10 +202,36 @@ def receive_image(req: https_fn.Request) -> https_fn.Response:
         print(f"Error processing request: {str(e)}")
         return https_fn.Response(f"Error processing request: {str(e)}", status=400)
 
-# Test endpoint to check Python version
 @https_fn.on_request()
 def python_version_eye_uploader(req: https_fn.Request) -> https_fn.Response:
-    return https_fn.Response(f"Hello world\nPython version: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+    import json
+    print("Python version function called")
+    
+    # Handle CORS preflight request
+    if req.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Max-Age': '3600'
+        }
+        return https_fn.Response('', status=204, headers=headers)
+    
+    # Set CORS headers for actual request
+    headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json'
+    }
+    
+    response_data = {
+        "message": "Hello world",
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    }
+    
+    return https_fn.Response(
+        json.dumps(response_data),
+        headers=headers
+    )
 
 # Test endpoint to verify TensorFlow import and version
 @https_fn.on_request(cors=options.CorsOptions(

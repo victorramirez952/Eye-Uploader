@@ -65,6 +65,7 @@ def get_overlay(hash):
     fileName = "overlays/{}.png".format(hash)
     bucket = storage.bucket()
     blob = bucket.blob(fileName)
+    blob.content_type = 'image/png'
     blob.upload_from_filename("images/overlay.png")
     blob.make_public()
     public_url = blob.public_url
@@ -94,6 +95,7 @@ def save_image_from_array(img_array, save_path, file_name, hash):
     fileName = "masks/{}.png".format(hash)
     bucket = storage.bucket()
     blob = bucket.blob(fileName)
+    blob.content_type = 'image/png'
     blob.upload_from_filename("images/masked.png")
     blob.make_public()
     public_url = blob.public_url
