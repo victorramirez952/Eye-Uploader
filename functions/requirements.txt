@@ -63,6 +63,7 @@ pycparser==2.22
 Pygments==2.18.0
 PyJWT==2.9.0
 pyparsing==3.2.0
+pyvista==0.46.4
 PyYAML==6.0.2
 requests==2.32.3
 rich==13.9.3
@@ -79,6 +80,7 @@ termcolor==2.5.0
 torch==2.9.0
 torchvision==0.24.0
 tqdm==4.67.1
+trimesh==4.9.0
 typing_extensions==4.12.2
 uritemplate==4.1.1
 urllib3==2.2.3
