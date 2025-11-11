@@ -142,7 +142,12 @@ def classify_directory(image_directory, us_model_path=None, melanoma_model_path=
     Returns:
         List of image paths classified as Affected Eye
     """
-    us_model_path = r"C:/Users/jairr/Documents/UDEM/9noSemestre/PEF/EYE_UPLOADER/functions/image_classifier/keras_models/mobile_net_best_model.keras"
-    melanoma_model_path = r"C:/Users/jairr/Documents/UDEM/9noSemestre/PEF/EYE_UPLOADER/functions/image_classifier/keras_models/melanoma_classifier_mobile_net.keras"
+    # Resolve model paths relative to this file so they work regardless of working directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if us_model_path is None:
+        us_model_path = os.path.join(script_dir, 'keras_models', 'mobile_net_best_model.keras')
+    if melanoma_model_path is None:
+        melanoma_model_path = os.path.join(script_dir, 'keras_models', 'melanoma_classifier_mobile_net.keras')
+
     classifier = ImageClassifier(us_model_path, melanoma_model_path, sections)
     return classifier.classify_images(image_directory)

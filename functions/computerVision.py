@@ -18,7 +18,10 @@ def load_keras_model():
     
     global model
     print("* Loading model...")
-    model = load_model('./keras/model.keras', compile=False)
+    # Use absolute path relative to this module file
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(script_dir, 'keras', 'model.keras')
+    model = load_model(model_path, compile=False)
     print("* Model loaded")
     
 def prepare_image(path):
@@ -101,70 +104,6 @@ def save_image_from_array(img_array, save_path, file_name, hash):
     public_url = blob.public_url
     overlay_url = get_overlay(hash)
     return {"mask_url": public_url, "overlay_url": overlay_url}
-
-# Measure thickness
-def measure(img_array):
-
-    conversion_factor = 71.0
-
-    points2 = [(0, 0), (0, 0)]
-    for i in range(0, img_array.shape[0]):
-        for j in range(1, img_array.shape[1]):
-            if img_array[i,j] == 255:
-                points2[0] = (j, i)
-                break
-    for i in range(img_array.shape[0]-1, 0, -1):
-        for j in range(img_array.shape[1]-1, 0, -1):
-            if img_array[i,j] == 255:
-                points2[1] = (j, i)
-                break
-
-    distance = np.sqrt((points2[0][0] - points2[1][0])**2 + (points2[0][1] - points2[1][1])**2)
-
-    delta_x = points2[0][0] - points2[1][0]
-    delta_y = points2[0][1] - points2[1][1]
-
-    theta_radians = math.atan2(delta_y, delta_x)
-    theta_degrees = math.degrees(theta_radians)
-
-    def rotate_image(image, angle):
-          image_center = tuple(np.array(image.shape[1::-1]) / 2)
-          rot_mat = cv2.getRotationMatrix2D(image_center, angle, 1.0)
-          result = cv2.warpAffine(image, rot_mat, image.shape[1::-1], flags=cv2.INTER_LINEAR)
-          return result
-
-    rotated = rotate_image(img_array, theta_degrees)
-
-    points3 = [(0, 0), (0, 0)]
-    for i in range(0, rotated.shape[1]):
-        for j in range(0, rotated.shape[0]):
-            if rotated[j, i] == 255:
-                points3[0] = (i, j)
-                break
-
-    for i in range(rotated.shape[1]-1, 0, -1):
-        for j in range(0, rotated.shape[0]):
-            if rotated[j, i] == 255:
-                points3[1] = (i, j)
-                break
-
-    half_point = (int((points3[0][0] + points3[1][0]) / 2), int((points3[0][1] + points3[1][1]) / 2))
-
-    points2 = [(0, 0), (0, 0)]
-
-    for i in range(half_point[1], rotated.shape[0]):
-        if rotated[i, half_point[0]] == 0:
-            points2[0] = (half_point[0], i)
-            break
-
-    for i in range(half_point[1], 0, -1):
-        if rotated[i, half_point[0]] == 0:
-            points2[1] = (half_point[0], i)
-            break
-
-    distance2 = np.sqrt((points2[0][0] - points2[1][0])**2 + (points2[0][1] - points2[1][1])**2)
-
-    return round(distance2 / conversion_factor, 2)
 
 # Get echogenicity
 def predict_class(og, mask):

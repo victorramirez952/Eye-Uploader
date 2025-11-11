@@ -79,6 +79,7 @@ venv/
 functions/images/*
 functions/tempImages/*
 functions/masks/*
+images/*
 
 # pdfs
 functions/pdfs/*

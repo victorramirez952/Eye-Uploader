@@ -14,23 +14,26 @@ import os
 import shutil
 import random
 from PIL import Image, ImageFilter # Para el resizing
-from computerVision import load_keras_model, prepare_image, predict, resize_and_smooth, save_image_from_array, measure, predict_class
+from computerVision import load_keras_model, prepare_image, predict, resize_and_smooth, save_image_from_array, predict_class
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
-# Import 3D reconstruction module
-from image_classifier.image_classifier import classify_directory
-
-# cred = credentials.Certificate("./firebaseConfig.json")
-cred = credentials.Certificate("C:\\Users\\jairr\\Documents\\UDEM\\9noSemestre\\PEF\\EYE_UPLOADER\\functions\\firebaseConfig.json")
+cred = credentials.Certificate("./firebaseConfig.json")
+# cred = credentials.Certificate("C:\\Users\\jairr\\Documents\\UDEM\\9noSemestre\\PEF\\EYE_UPLOADER\\functions\\firebaseConfig.json")
 initialize_app(cred, {'storageBucket': 'eci-ot25.firebasestorage.app'})
 db = firestore.client()
 
-def computer_vision(hash: str):
+def computer_vision(hash: str, verbose = False):
     # Lazy load TensorFlow and set seeds only when needed
     import tensorflow as tf
+    from enhanced_measurements import Measurer
+    from enhanced_measurements.config import MEDIAN_RULE_MM, MEDIAN_AP_AXIS
+    from measure_enhanced import measure, visualize_measure
     
     os.environ["ULTRASOUND"] = str(39)
     np.random.seed(39) # Set seed. Now any random operation using NumPy will produce the same result
@@ -41,6 +44,12 @@ def computer_vision(hash: str):
     # Create images directory if not exist
     os.makedirs("images", exist_ok=True)
     path = './images/image.png'
+
+    # # load IMAGE_PATH from .env file
+    # path = os.getenv("IMAGE_PATH")
+    # image = Image.open(path)
+    # image.save(f'./images/image.png')
+
     # Cargar img original
     og = cv2.imread(path)
     # Preprocesar img
@@ -57,12 +66,39 @@ def computer_vision(hash: str):
     # Guardar mask bonita (keep the high-res version for storage)
     maskInfo = save_image_from_array(image, "./images/", 'masked.png', hash)
     
-    # Medir (use high-res mask for accurate measurements)
-    thickness = measure(mask)
-    # Clasificar (use resized mask that matches original image dimensions)
+    # Use Measurer to get mm_per_pixel calibration
+    equivalencies = {
+        'median_rule_mm': MEDIAN_RULE_MM,
+        'median_ap_axis': MEDIAN_AP_AXIS
+    }
+    
+    # Save the resized mask temporarily for Measurer
+    mask_resized_path = './images/mask_resized.png'
+    cv2.imwrite(mask_resized_path, mask_resized)
+    
+    measurer = Measurer(temp_folder="tempImages", verbose=verbose)
+    result = measurer.process_image(
+        path,
+        mask_path=mask_resized_path,
+        equivalencies=equivalencies,
+        test_mode=False
+    )
+    
+    mm_per_pixel = result['mm_per_pixel'] if result else 0
+    mm_per_pixel -= 0.00128  # Calibration offset
+    method = result['method'] if result else 'none'
+    
+    # Use measure to get the thickness measurement in mm
+    thickness = measure(mask_resized, mm_per_pixel)
+    
+    # Generate visualization if verbose
+    if verbose:
+        visualize_measure(mask_resized, mm_per_pixel, thickness)
+    
+    # Classify echogenicity using resized mask that matches original image dimensions
     pred_class = predict_class(og, mask_resized)
     
-    vision = {"mask": maskInfo["mask_url"], "overlay": maskInfo["overlay_url"], "width": thickness, "echogenicity": pred_class}
+    vision = {"mask": maskInfo["mask_url"], "overlay": maskInfo["overlay_url"], "thickness": thickness, "echogenicity": pred_class}
     return vision
 
 def getImages(fileroute: str):
@@ -107,6 +143,7 @@ def getImages(fileroute: str):
         # Call image_classifier to get Affected Eye images
         from image_classifier.image_classifier import classify_directory
         affected_eye_images = classify_directory("tempImages")
+
         # image_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.tiff'}
         # for root, dirs, files in os.walk("tempImages"):
         #     for filename in files:
@@ -154,9 +191,13 @@ def uploadResults(data: dict, hash: str):
         doc_ref.set(data)
     except Exception as e:
         print(f"Error uploading results: {str(e)}")
-        
+       
 # HTTP function that receives a body
-@https_fn.on_request(cors=options.CorsOptions(
+@https_fn.on_request(
+    timeout_sec=240,
+    memory=options.MemoryOption.GB_4,
+    cpu=2,
+    cors=options.CorsOptions(
         cors_origins=["*"],
         cors_methods=["get", "post"],
     ))
@@ -177,7 +218,10 @@ def receive_pdf(req: https_fn.Request) -> https_fn.Response:
         return https_fn.Response(f"Error processing request: {str(e)}", status=400)
 
 # HTTP function that receives a body
-@https_fn.on_request(cors=options.CorsOptions(
+@https_fn.on_request(
+    timeout_sec=240,
+    memory=options.MemoryOption.GB_2,
+    cors=options.CorsOptions(
         cors_origins=["*"],
         cors_methods=["get", "post"],
     ))
@@ -201,7 +245,7 @@ def receive_image(req: https_fn.Request) -> https_fn.Response:
         blob.make_public()
         public_url = blob.public_url
         vision = computer_vision(hash)
-        body = {"image": public_url, "mask": vision["mask"], "overlay": vision["overlay"], "width": vision["width"], "echogenicity": vision["echogenicity"]}
+        body = {"image": public_url, "mask": vision["mask"], "overlay": vision["overlay"], "thickness": vision["thickness"], "echogenicity": vision["echogenicity"]}
         uploadResults(body, hash)
         json_body = json.dumps(body)
         
@@ -211,60 +255,60 @@ def receive_image(req: https_fn.Request) -> https_fn.Response:
         print(f"Error processing request: {str(e)}")
         return https_fn.Response(f"Error processing request: {str(e)}", status=400)
 
-@https_fn.on_request()
-def python_version_eye_uploader(req: https_fn.Request) -> https_fn.Response:
-    import json
-    print("Python version function called")
+# @https_fn.on_request()
+# def python_version_eye_uploader(req: https_fn.Request) -> https_fn.Response:
+#     import json
+#     print("Python version function called")
     
-    # Handle CORS preflight request
-    if req.method == 'OPTIONS':
-        headers = {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST',
-            'Access-Control-Allow-Headers': 'Content-Type',
-            'Access-Control-Max-Age': '3600'
-        }
-        return https_fn.Response('', status=204, headers=headers)
+#     # Handle CORS preflight request
+#     if req.method == 'OPTIONS':
+#         headers = {
+#             'Access-Control-Allow-Origin': '*',
+#             'Access-Control-Allow-Methods': 'GET, POST',
+#             'Access-Control-Allow-Headers': 'Content-Type',
+#             'Access-Control-Max-Age': '3600'
+#         }
+#         return https_fn.Response('', status=204, headers=headers)
     
-    # Set CORS headers for actual request
-    headers = {
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': 'application/json'
-    }
+#     # Set CORS headers for actual request
+#     headers = {
+#         'Access-Control-Allow-Origin': '*',
+#         'Content-Type': 'application/json'
+#     }
     
-    response_data = {
-        "message": "Hello world",
-        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-    }
+#     response_data = {
+#         "message": "Hello world",
+#         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+#     }
     
-    return https_fn.Response(
-        json.dumps(response_data),
-        headers=headers
-    )
+#     return https_fn.Response(
+#         json.dumps(response_data),
+#         headers=headers
+#     )
 
-# Test endpoint to verify TensorFlow import and version
-@https_fn.on_request(cors=options.CorsOptions(
-        cors_origins=["*"],
-        cors_methods=["get", "post"],
-    ))
-def test_tensorflow(req: https_fn.Request) -> https_fn.Response:
-    try:
-        import tensorflow as tf
-        version = tf.__version__
-        print(f"TensorFlow version: {version}")
-        response_data = {
-            "status": "success",
-            "tensorflow_version": version,
-            "message": f"TensorFlow successfully imported. Version: {version}"
-        }
-        return https_fn.Response(response=json.dumps(response_data), status=200)
-    except Exception as e:
-        print(f"Error importing TensorFlow: {str(e)}")
-        error_data = {
-            "status": "error",
-            "message": f"Failed to import TensorFlow: {str(e)}"
-        }
-        return https_fn.Response(response=json.dumps(error_data), status=500)
+# # Test endpoint to verify TensorFlow import and version
+# @https_fn.on_request(cors=options.CorsOptions(
+#         cors_origins=["*"],
+#         cors_methods=["get", "post"],
+#     ))
+# def test_tensorflow(req: https_fn.Request) -> https_fn.Response:
+#     try:
+#         import tensorflow as tf
+#         version = tf.__version__
+#         print(f"TensorFlow version: {version}")
+#         response_data = {
+#             "status": "success",
+#             "tensorflow_version": version,
+#             "message": f"TensorFlow successfully imported. Version: {version}"
+#         }
+#         return https_fn.Response(response=json.dumps(response_data), status=200)
+#     except Exception as e:
+#         print(f"Error importing TensorFlow: {str(e)}")
+#         error_data = {
+#             "status": "error",
+#             "message": f"Failed to import TensorFlow: {str(e)}"
+#         }
+#         return https_fn.Response(response=json.dumps(error_data), status=500)
 
 # 3D Reconstruction endpoint
 @https_fn.on_request(
@@ -356,3 +400,28 @@ def tridimensional_reconstruction(req: https_fn.Request) -> https_fn.Response:
             }),
             status=500
         )
+
+
+# # Endpoint for test calling computer_vision() function
+# @https_fn.on_request(cors=options.CorsOptions(
+#         cors_origins=["*"],
+#         cors_methods=["get", "post"],
+#     ))
+# def test_computer_vision(req: https_fn.Request) -> https_fn.Response:
+#     # get HASH from .env file
+#     hash = os.getenv("HASH")
+#     try:
+#         vision = computer_vision(hash, verbose=True)
+#         return https_fn.Response(
+#             response=json.dumps(vision),
+#             status=200
+#         )
+#     except Exception as e:
+#         print(f"Error in test_computer_vision: {str(e)}")
+#         return https_fn.Response(
+#             response=json.dumps({
+#                 "status": "error",
+#                 "message": str(e)
+#             }),
+#             status=500
+#         )
