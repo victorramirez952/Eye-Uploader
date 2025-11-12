@@ -96,3 +96,5 @@ Requirements*.md
 .vscode/
 .github/
 test/
+
+tempImages/
