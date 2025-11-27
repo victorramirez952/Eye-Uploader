@@ -7,7 +7,12 @@
         ".git",
         "firebase-debug.log",
         "firebase-debug.*.log",
-        "*.local"
+        "*.local",
+        "images",
+        "pdfs",
+        "tempImages",
+        "masks",
+        "__pycache__"
       ],
       "source": "functions",
       "runtime": "python311"

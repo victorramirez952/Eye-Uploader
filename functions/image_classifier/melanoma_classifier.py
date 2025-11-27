@@ -10,16 +10,24 @@ import os
 import shutil
 import cv2
 import numpy as np
-import tensorflow as tf
 from tqdm import tqdm
+
+try:
+    import openvino as ov
+    OPENVINO_AVAILABLE = True
+except ImportError:
+    OPENVINO_AVAILABLE = False
+    print("Warning: OpenVINO not available. Falling back to TensorFlow/Keras.")
 
 
 class MelanomaClassifier:
     def __init__(self, model_path, melanoma_folder="MelanomaImages",
-                 non_melanoma_folder="NonMelanomaImages"):
+                 non_melanoma_folder="NonMelanomaImages", verbose=True):
         self.model_path = model_path
         self.melanoma_folder = melanoma_folder
         self.non_melanoma_folder = non_melanoma_folder
+        self.use_openvino = OPENVINO_AVAILABLE
+        self.verbose = verbose
 
         # Load melanoma classification model
         self.model = self._load_model()
@@ -28,9 +36,40 @@ class MelanomaClassifier:
         # self._setup_folders()
 
     def _load_model(self):
-        """Load the trained melanoma classification model"""
+        """Load the trained melanoma classification model (OpenVINO or TensorFlow)"""
         try:
-            model = tf.keras.models.load_model(self.model_path)
+            if self.use_openvino:
+                # Try OpenVINO first
+                try:
+                    # Change .keras extension to .xml for OpenVINO model
+                    if self.model_path.endswith('.keras'):
+                        openvino_model_path = self.model_path.replace('.keras', '.xml')
+                    else:
+                        openvino_model_path = self.model_path
+                    
+                    if not os.path.exists(openvino_model_path):
+                        print(f"OpenVINO model not found at {openvino_model_path}, falling back to Keras")
+                        self.use_openvino = False
+                    else:
+                        core = ov.Core()
+                        ov_model = core.read_model(openvino_model_path)
+                        compiled_model = core.compile_model(ov_model, 'CPU')
+                        print("Melanoma classifier loaded with OpenVINO")
+                        return compiled_model
+                except Exception as ov_error:
+                    print(f"OpenVINO loading failed: {ov_error}. Falling back to Keras.")
+                    self.use_openvino = False
+            
+            # Fallback to TensorFlow/Keras
+            from tensorflow import keras
+            keras_model_path = self.model_path.replace('.xml', '.keras') if self.model_path.endswith('.xml') else self.model_path
+            
+            if not os.path.exists(keras_model_path):
+                # Try original path if replacement didn't work
+                keras_model_path = self.model_path
+            
+            model = keras.models.load_model(keras_model_path)
+            print("Melanoma classifier loaded with TensorFlow/Keras")
             return model
         except Exception as e:
             print(f"Error loading melanoma classification model: {e}")
@@ -122,12 +161,12 @@ class MelanomaClassifier:
         processed_images = []
         valid_image_paths = []
 
-        with tqdm(us_image_paths, desc="Preprocessing for melanoma classification") as pbar:
-            for image_path in pbar:
-                processed_img = self.preprocess_image_for_melanoma(image_path, 224)
-                if processed_img is not None:
-                    processed_images.append(processed_img)
-                    valid_image_paths.append(image_path)
+        iterator = tqdm(us_image_paths, desc="Preprocessing for melanoma classification", disable=not self.verbose)
+        for image_path in iterator:
+            processed_img = self.preprocess_image_for_melanoma(image_path, 224)
+            if processed_img is not None:
+                processed_images.append(processed_img)
+                valid_image_paths.append(image_path)
 
         if not processed_images:
             print("No valid images for melanoma classification")
@@ -137,8 +176,22 @@ class MelanomaClassifier:
         processed_images = np.array(processed_images)
         processed_images_normalized = processed_images.astype(np.float32) / 255.0
 
-        # Make predictions
-        predictions = self.model.predict(processed_images_normalized, batch_size=8, verbose=1)
+        # Make predictions using OpenVINO or TensorFlow
+        predictions = []
+        batch_size = 8
+        
+        if self.use_openvino:
+            # OpenVINO inference
+            for i in range(0, len(processed_images_normalized), batch_size):
+                batch = processed_images_normalized[i:i + batch_size]
+                # OpenVINO inference - use input index 0
+                output = self.model({0: batch})
+                # Get the output tensor (first output)
+                batch_predictions = list(output.values())[0]
+                predictions.extend(batch_predictions)
+        else:
+            # TensorFlow/Keras inference
+            predictions = self.model.predict(processed_images_normalized, batch_size=batch_size, verbose=0)
 
         # Extract confidence scores
         confidences_melanoma = [float(pred[0]) for pred in predictions]

@@ -214,3 +214,60 @@ def smooth_with_implicit_modeling(inter: pv.PolyData, target_bbox: tuple[float, 
             print(f"    Standard smoothing also failed: {e2}")
             print("    Returning original mesh...")
             return inter
+
+
+def create_anatomical_markers(mesh: pv.PolyData, marker_size: float = 15) -> dict:
+    """
+    Create markers for anatomical regions of the melanoma.
+    
+    Anatomy:
+    - Escleral (Y+): Large upper face - Orange
+    - Apical (Y-): Large lower face - Green
+    - Craneal (X-): Small lateral face - Blue
+    - Caudal (X+): Small opposite face - Yellow
+    
+    Parameters:
+    -----------
+    mesh : pv.PolyData
+        The 3D mesh to create markers for
+    marker_size : float
+        Size of the marker spheres
+    
+    Returns:
+    --------
+    dict : Dictionary with marker information (position, color, label) for each region
+    """
+    xmin, xmax, ymin, ymax, zmin, zmax = mesh.bounds
+    center = np.array(mesh.center)
+    
+    # Calculate offsets (55% from center to edge = outside the mesh)
+    dx = (xmax - xmin) * 0.55
+    dy = (ymax - ymin) * 0.55
+    dz = (zmax - zmin) * 0.55
+    
+    # Define marker positions (outside mesh)
+    positions = {
+        'escleral': center + np.array([0, dy, 0]),
+        'apical': center + np.array([0, -dy, 0]),
+        'craneal': center + np.array([-dx, 0, 0]),
+        'caudal': center + np.array([dx, 0, 0])
+    }
+    
+    # Define marker colors (RGB 0-255)
+    colors = {
+        'escleral': [255, 140, 0],      # Orange
+        'craneal': [65, 105, 225],      # Blue (Royal Blue)
+        'apical': [0, 255, 0],          # Green
+        'caudal': [255, 255, 0]         # Yellow
+    }
+    
+    # Build marker dictionary
+    markers = {}
+    for region, pos in positions.items():
+        markers[region] = {
+            'position': pos,
+            'color': colors[region],
+            'label': region.capitalize()
+        }
+    
+    return markers

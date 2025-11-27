@@ -184,14 +184,9 @@ class Measurer:
         self.save_image(final_result, "morphological_result.jpg")
         
         if self.verbose:
-            print("Pixelating image...")
-        pixelated_result = pixelate_image(final_result, block_size=10)
-        self.save_image(pixelated_result, "pixelated_result.jpg")
-        
-        if self.verbose:
-            print("Applying marching squares...")
+            print("Detecting vertical borders...")
         bordered_result, border_points, tallest_x, tallest_y = apply_marching_squares(
-            pixelated_result, block_size=10, threshold=30, temp_folder=self.temp_folder
+            final_result, block_size=10, threshold=30, temp_folder=self.temp_folder
         )
         self.save_image(bordered_result, "marching_squares_borders.jpg")
         
@@ -201,7 +196,7 @@ class Measurer:
         if self.verbose:
             print("Fitting circle to border points...")
         circle_result, circle_params = fit_circle_to_border_points(
-            pixelated_result,
+            final_result,
             border_points,
             x_asymptote_ratio=circle_fit_params.get('x_asymptote_ratio', 0.25),
             min_x_ratio=circle_fit_params.get('min_x_ratio', 0.35),

@@ -219,7 +219,13 @@ class ExtrusionReconstruction:
             
             print_final_results(mesh_to_measure, base_t_mm, h_mm, base_l_mm, area_mm2, vol_mm3)
 
-            # 6) Decide which mesh to export based on configuration
+            # 6) Create anatomical markers
+            from .mesh_ops import create_anatomical_markers
+            markers = create_anatomical_markers(mesh_to_measure, marker_size=5)
+            print(f"\n=== ANATOMICAL MARKERS ===")
+            print(f"Created {len(markers)} markers: {', '.join(markers.keys())}")
+            
+            # 7) Decide which mesh to export based on configuration
             mesh_to_export = inter if EXPORT_SMOOTHED else inter_original
             
             # Apply additional visualization smoothing if exporting smoothed mesh and viz smoothing is enabled
@@ -232,7 +238,7 @@ class ExtrusionReconstruction:
             if EXPORT_SMOOTHED and SMOOTH_FOR_VIZ:
                 print(f"  (with additional visualization smoothing: {SMOOTH_ITERATIONS} iterations)")
 
-            # 6.1) Export to GLB
+            # 7.1) Export to GLB (with markers)
             print("Exporting to GLB...")
             glb_exporter = GLBExporter()
             vertices = mesh_to_export.points
@@ -245,7 +251,7 @@ class ExtrusionReconstruction:
             
             # Create temporary GLB file
             glb_temp_path = os.path.join(self.temp_dir, "model.glb")
-            success = glb_exporter.export_to_glb(vertices, faces, glb_temp_path, EXPORT_SMOOTHED)
+            success = glb_exporter.export_to_glb(vertices, faces, glb_temp_path, EXPORT_SMOOTHED, markers=markers)
             
             if not success:
                 raise RuntimeError("Failed to export GLB file")
@@ -406,7 +412,13 @@ def main(use_defaults: bool = False):
     
     print_final_results(mesh_to_measure, base_t_mm, h_mm, base_l_mm, area_mm2, vol_mm3)
 
-    # 6) Decide which mesh to export based on configuration
+    # 6) Create anatomical markers
+    from .mesh_ops import create_anatomical_markers
+    markers = create_anatomical_markers(mesh_to_measure, marker_size=5)
+    print(f"\n=== ANATOMICAL MARKERS ===")
+    print(f"Created {len(markers)} markers: {', '.join(markers.keys())}")
+    
+    # 7) Decide which mesh to export based on configuration
     mesh_to_export = inter if EXPORT_SMOOTHED else inter_original
     
     # Apply additional visualization smoothing if exporting smoothed mesh and viz smoothing is enabled
@@ -419,7 +431,7 @@ def main(use_defaults: bool = False):
     if EXPORT_SMOOTHED and SMOOTH_FOR_VIZ:
         print(f"  (with additional visualization smoothing: {SMOOTH_ITERATIONS} iterations)")
 
-    # 6.1) Export to GLB if enabled
+    # 7.1) Export to GLB if enabled (with markers)
     if EXPORT_TO_GLB:
         glb_exporter = GLBExporter()
         vertices = mesh_to_export.points
@@ -429,13 +441,13 @@ def main(use_defaults: bool = False):
             faces = faces_array.reshape(n_faces, -1)[:, 1:]
         else:
             faces = np.array([])
-        success = glb_exporter.export_to_glb(vertices, faces, GLB_OUTPUT_FILENAME, EXPORT_SMOOTHED)
+        success = glb_exporter.export_to_glb(vertices, faces, GLB_OUTPUT_FILENAME, EXPORT_SMOOTHED, markers=markers)
         if success:
-            print(f"✓ Model exported to {GLB_OUTPUT_FILENAME}")
+            print(f"✓ Model with markers exported to {GLB_OUTPUT_FILENAME}")
 
-    # 7) Visualization 
+    # 8) Visualization 
     if ENABLE_VISUALIZATION:
-        visualize_results(mesh_T, mesh_L, inter, SMOOTH_FOR_VIZ, SMOOTH_ITERATIONS)
+        visualize_results(mesh_T, mesh_L, inter, SMOOTH_FOR_VIZ, SMOOTH_ITERATIONS, markers=markers)
         
     else:
         print("Visualization disabled by config")
