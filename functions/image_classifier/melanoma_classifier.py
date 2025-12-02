@@ -148,10 +148,14 @@ class MelanomaClassifier:
             print(f"Error preprocessing image for melanoma: {e}")
             return None
 
-    def classify_melanoma_images(self, us_image_paths):
+    def classify_melanoma_images(self, us_image_paths, confidence_threshold=0.5):
         """
         Classify US images for melanoma without saving to disk.
-        Returns confidence scores and paths of original images.
+        Returns confidence scores and paths of images with melanoma confidence > threshold.
+        
+        Args:
+            us_image_paths: List of image paths to classify
+            confidence_threshold: Minimum confidence for melanoma classification (default: 0.5)
         """
         if not us_image_paths:
             print("No US images to classify for melanoma")
@@ -195,5 +199,18 @@ class MelanomaClassifier:
 
         # Extract confidence scores
         confidences_melanoma = [float(pred[0]) for pred in predictions]
+        
+        # Filter images by confidence threshold
+        filtered_confidences = []
+        filtered_paths = []
+        
+        for confidence, path in zip(confidences_melanoma, valid_image_paths):
+            if confidence > confidence_threshold:
+                filtered_confidences.append(confidence)
+                filtered_paths.append(path)
+        
+        filtered_count = len(filtered_paths)
+        total_count = len(valid_image_paths)
+        print(f"Filtered: {filtered_count}/{total_count} images with melanoma confidence > {confidence_threshold}")
 
-        return confidences_melanoma, valid_image_paths
+        return filtered_confidences, filtered_paths

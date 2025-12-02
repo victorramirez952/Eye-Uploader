@@ -30,3 +30,4 @@ configure_gpu()
 
 # Import endpoints
 from endpoints import receive_pdf, receive_image, tridimensional_reconstruction
+# from endpoints import receive_pdf, receive_image, tridimensional_reconstruction, receive_pdf_gpu, receive_image_gpu

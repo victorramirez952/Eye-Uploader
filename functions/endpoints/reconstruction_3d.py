@@ -1,9 +1,13 @@
 from firebase_functions import https_fn, options
+from firebase_admin import firestore
 import json
+import hashlib
+
+db = firestore.client()
 
 
 @https_fn.on_request(
-    timeout_sec=300,
+    timeout_sec=600,
     memory=options.MemoryOption.GB_4,
     cors=options.CorsOptions(
         cors_origins=["*"],
@@ -49,6 +53,28 @@ def tridimensional_reconstruction(req: https_fn.Request) -> https_fn.Response:
                 status=400
             )
         
+        # Generate hash from image URLs
+        hash_str = hashlib.sha256(f"{transversal_image_url}{longitudinal_image_url}".encode()).hexdigest()
+        
+        # Check if reconstruction already exists
+        doc_ref = db.collection(u'reconstruction_results').document(hash_str)
+        existing_doc = doc_ref.get()
+        
+        if existing_doc.exists:
+            print(f"Reconstruction already exists for hash: {hash_str}")
+            existing_data = existing_doc.to_dict()
+            return https_fn.Response(
+                response=json.dumps({
+                    "status": "success",
+                    "glb_url": existing_data["glb_url"],
+                    "area_mm2": existing_data["area_mm2"],
+                    "volume_mm3": existing_data["volume_mm3"],
+                    "processing_time": existing_data.get("processing_time", 0),
+                    "cached": True
+                }),
+                status=200
+            )
+        
         # Perform 3D reconstruction
         from reconstruction_3d.extrusion_reconstruction import ExtrusionReconstruction
         reconstructor = ExtrusionReconstruction()
@@ -58,7 +84,8 @@ def tridimensional_reconstruction(req: https_fn.Request) -> https_fn.Response:
             longitudinal_image_url=longitudinal_image_url,
             base_t_mm=base_T,
             base_l_mm=base_L,
-            h_mm=height
+            h_mm=height,
+            hash_str=hash_str
         )
         
         if result.get("success"):

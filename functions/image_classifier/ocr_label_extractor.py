@@ -149,8 +149,11 @@ class OCRLabelExtractor:
     def classify_images_with_ocr(self, image_paths, confidences_melanoma):
         """
         Classify images based on OCR labels and melanoma predictions.
-        Returns paths of original images classified as Affected Eye (melanoma).
+        Returns paths of images classified as Affected Eye (melanoma) with confidence > 0.5.
         Does not save images to disk.
+        
+        Note: image_paths and confidences_melanoma are already filtered by melanoma_classifier
+        to only include images with confidence > 0.5
         """
         if not image_paths:
             print("No images to classify with OCR")

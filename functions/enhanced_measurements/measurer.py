@@ -26,7 +26,7 @@ class Measurer:
     Can be used as a standalone processor or imported as a library.
     """
     
-    def __init__(self, temp_folder="tempImages", kernel_size=(5, 5), kernel_shape="rectangular", verbose=False):
+    def __init__(self, temp_folder="tempImages", kernel_size=(5, 5), kernel_shape="rectangular", verbose=True):
         """
         Initialize the Measurer class.
         

@@ -10,7 +10,9 @@ import time
 import os
 import requests
 import tempfile
-from firebase_admin import storage
+import hashlib
+import shutil
+from firebase_admin import storage, firestore
 
 # Import modular components
 from .config import *
@@ -40,6 +42,7 @@ class ExtrusionReconstruction:
     def __init__(self):
         """Initialize the reconstruction class."""
         self.temp_dir = None
+        self.db = firestore.client()
         
     def download_image(self, url: str, filename: str) -> str:
         """
@@ -92,15 +95,32 @@ class ExtrusionReconstruction:
         blob.make_public()
         return blob.public_url
     
+    def upload_results(self, data: dict, hash_str: str):
+        """
+        Upload reconstruction results to Firestore.
+        
+        Parameters:
+        -----------
+        data : dict
+            Results data to upload
+        hash_str : str
+            Hash string to use as document ID
+        """
+        try:
+            doc_ref = self.db.collection(u'reconstruction_results').document(hash_str)
+            doc_ref.set(data)
+            print(f"✓ Results saved to Firestore with hash: {hash_str}")
+        except Exception as e:
+            print(f"Error uploading results to Firestore: {str(e)}")
+    
     def cleanup(self):
         """Clean up temporary files."""
         if self.temp_dir and os.path.exists(self.temp_dir):
-            import shutil
             shutil.rmtree(self.temp_dir)
             self.temp_dir = None
     
     def reconstruct(self, transversal_image_url: str, longitudinal_image_url: str,
-                   base_t_mm: float, base_l_mm: float, h_mm: float) -> dict:
+                   base_t_mm: float, base_l_mm: float, h_mm: float, hash_str: str = None) -> dict:
         """
         Main reconstruction pipeline.
         
@@ -260,25 +280,38 @@ class ExtrusionReconstruction:
             
             # Upload to Firebase Storage
             print("Uploading to Firebase Storage...")
-            import hashlib
-            import time as time_module
-            hash_str = hashlib.sha256(f"{transversal_image_url}{longitudinal_image_url}{time_module.time()}".encode()).hexdigest()
+            # Generate hash from URLs for unique storage path if not provided
+            if hash_str is None:
+                hash_str = hashlib.sha256(f"{transversal_image_url}{longitudinal_image_url}".encode()).hexdigest()
+            
             storage_path = f"3d_models/{hash_str}.glb"
             download_url = self.upload_to_firebase(glb_temp_path, storage_path)
             
             print(f"✓ Model uploaded: {download_url}")
 
             end_time = time.time()
-            print(f"\nTotal processing time: {end_time - start_time:.2f} seconds")
+            processing_time = end_time - start_time
+            print(f"\nTotal processing time: {processing_time:.2f} seconds")
             
-            # Return results
-            return {
+            # Prepare results
+            results = {
                 "success": True,
                 "glb_url": download_url,
                 "area_mm2": float(area_mm2),
                 "volume_mm3": float(vol_mm3),
-                "processing_time": float(end_time - start_time)
+                "processing_time": float(processing_time),
+                "transversal_image_url": transversal_image_url,
+                "longitudinal_image_url": longitudinal_image_url,
+                "base_t_mm": base_t_mm,
+                "base_l_mm": base_l_mm,
+                "h_mm": h_mm
             }
+            
+            # Save results to Firestore
+            self.upload_results(results, hash_str)
+            
+            # Return results
+            return results
             
         except Exception as e:
             print(f"Error during reconstruction: {str(e)}")

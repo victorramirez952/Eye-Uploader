@@ -129,3 +129,30 @@ def receive_pdf(req: https_fn.Request) -> https_fn.Response:
         # Handle any errors that occur
         print(f"Error processing request: {str(e)}")
         return https_fn.Response(f"Error processing request: {str(e)}", status=400)
+
+
+@https_fn.on_request(
+    timeout_sec=240,
+    memory=options.MemoryOption.GB_16,
+    cpu=4,
+    preserve_external_changes=True,
+    cors=options.CorsOptions(
+        cors_origins=["*"],
+        cors_methods=["get", "post"],
+    ))
+def receive_pdf_gpu(req: https_fn.Request) -> https_fn.Response:
+    try:
+        body_data = req.get_data().decode('utf-8').strip() 
+        # Get the body data as bytes and decode it to a string
+        body_json = json.loads(body_data)
+        print("Received request data for pdf GPU endpoint:", body_json)
+        image_link = body_json.get("link", "No image link provided")
+        image = requests.get(image_link)
+        # Get pdfs directory if not exist
+        os.makedirs("pdfs", exist_ok=True)
+        open("pdfs/image.pdf", "wb").write(image.content)
+        return json.dumps(getImages("pdfs/image.pdf"))
+    except Exception as e:
+        # Handle any errors that occur
+        print(f"Error processing request: {str(e)}")
+        return https_fn.Response(f"Error processing request: {str(e)}", status=400)
