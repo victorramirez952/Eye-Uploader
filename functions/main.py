@@ -20,7 +20,7 @@ try:
         print("* Firebase app already initialized")
     except ValueError:
         cred = credentials.Certificate("./firebaseConfig.json")
-        initialize_app(cred, {'storageBucket': 'eci-ot25.firebasestorage.app'})
+        initialize_app(cred, {'storageBucket': 'mmy-app-e9474.firebasestorage.app'})
         print("* Firebase app initialized")
 except Exception as e:
     print(f"* Error initializing Firebase: {e}")

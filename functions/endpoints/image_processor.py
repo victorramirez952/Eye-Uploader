@@ -114,8 +114,14 @@ def receive_image(req: https_fn.Request) -> https_fn.Response:
         open("images/image.png", "wb").write(image.content)
         hash = hashlib.sha256(image.content).hexdigest()
         checkIfExists = db.collection(u'results').document(hash).get()
-        if checkIfExists.exists:
+        
+        # Compatibility fix: remove entries without 'basal_diameter'
+        if checkIfExists.exists and 'basal_diameter' not in checkIfExists.to_dict():
+            db.collection(u'results').document(hash).delete()
+            print("Deleted incomplete entry for hash:", hash)
+        elif checkIfExists.exists and 'basal_diameter' in checkIfExists.to_dict():
             return https_fn.Response(response=json.dumps(checkIfExists.to_dict()), status=200)
+
         fileName = "images/{}.png".format(hash)
         bucket = storage.bucket()
         blob = bucket.blob(fileName)
