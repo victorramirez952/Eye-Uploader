@@ -87,6 +87,7 @@ functions/pdfs/*
 # keras model
 model.keras
 keras_models/
+keras/
 
 # python cache
 __pycache__/
@@ -98,3 +99,5 @@ Requirements*.md
 test/
 
 tempImages/
+
+test_*

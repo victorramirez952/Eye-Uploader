@@ -277,6 +277,7 @@ def apply_marching_squares(image, block_size=10, threshold=200, intensity_thresh
     height, width = gray.shape
     border_points = []
     
+    # Apply marching squares by comparing adjacent blocks
     for y in range(0, height - block_size, block_size):
         for x in range(0, width - block_size, block_size):
             y_end = min(y + block_size, height)

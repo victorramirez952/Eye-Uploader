@@ -10,7 +10,9 @@ import time
 import os
 import requests
 import tempfile
-from firebase_admin import storage
+import hashlib
+import shutil
+from firebase_admin import storage, firestore
 
 # Import modular components
 from .config import *
@@ -40,6 +42,7 @@ class ExtrusionReconstruction:
     def __init__(self):
         """Initialize the reconstruction class."""
         self.temp_dir = None
+        self.db = firestore.client()
         
     def download_image(self, url: str, filename: str) -> str:
         """
@@ -92,15 +95,32 @@ class ExtrusionReconstruction:
         blob.make_public()
         return blob.public_url
     
+    def upload_results(self, data: dict, hash_str: str):
+        """
+        Upload reconstruction results to Firestore.
+        
+        Parameters:
+        -----------
+        data : dict
+            Results data to upload
+        hash_str : str
+            Hash string to use as document ID
+        """
+        try:
+            doc_ref = self.db.collection(u'reconstruction_results').document(hash_str)
+            doc_ref.set(data)
+            print(f"✓ Results saved to Firestore with hash: {hash_str}")
+        except Exception as e:
+            print(f"Error uploading results to Firestore: {str(e)}")
+    
     def cleanup(self):
         """Clean up temporary files."""
         if self.temp_dir and os.path.exists(self.temp_dir):
-            import shutil
             shutil.rmtree(self.temp_dir)
             self.temp_dir = None
     
     def reconstruct(self, transversal_image_url: str, longitudinal_image_url: str,
-                   base_t_mm: float, base_l_mm: float, h_mm: float) -> dict:
+                   base_t_mm: float, base_l_mm: float, h_mm: float, hash_str: str = None) -> dict:
         """
         Main reconstruction pipeline.
         
@@ -219,7 +239,13 @@ class ExtrusionReconstruction:
             
             print_final_results(mesh_to_measure, base_t_mm, h_mm, base_l_mm, area_mm2, vol_mm3)
 
-            # 6) Decide which mesh to export based on configuration
+            # 6) Create anatomical markers
+            from .mesh_ops import create_anatomical_markers
+            markers = create_anatomical_markers(mesh_to_measure, marker_size=5)
+            print(f"\n=== ANATOMICAL MARKERS ===")
+            print(f"Created {len(markers)} markers: {', '.join(markers.keys())}")
+            
+            # 7) Decide which mesh to export based on configuration
             mesh_to_export = inter if EXPORT_SMOOTHED else inter_original
             
             # Apply additional visualization smoothing if exporting smoothed mesh and viz smoothing is enabled
@@ -232,7 +258,7 @@ class ExtrusionReconstruction:
             if EXPORT_SMOOTHED and SMOOTH_FOR_VIZ:
                 print(f"  (with additional visualization smoothing: {SMOOTH_ITERATIONS} iterations)")
 
-            # 6.1) Export to GLB
+            # 7.1) Export to GLB (with markers)
             print("Exporting to GLB...")
             glb_exporter = GLBExporter()
             vertices = mesh_to_export.points
@@ -245,7 +271,7 @@ class ExtrusionReconstruction:
             
             # Create temporary GLB file
             glb_temp_path = os.path.join(self.temp_dir, "model.glb")
-            success = glb_exporter.export_to_glb(vertices, faces, glb_temp_path, EXPORT_SMOOTHED)
+            success = glb_exporter.export_to_glb(vertices, faces, glb_temp_path, EXPORT_SMOOTHED, markers=markers)
             
             if not success:
                 raise RuntimeError("Failed to export GLB file")
@@ -254,25 +280,38 @@ class ExtrusionReconstruction:
             
             # Upload to Firebase Storage
             print("Uploading to Firebase Storage...")
-            import hashlib
-            import time as time_module
-            hash_str = hashlib.sha256(f"{transversal_image_url}{longitudinal_image_url}{time_module.time()}".encode()).hexdigest()
+            # Generate hash from URLs for unique storage path if not provided
+            if hash_str is None:
+                hash_str = hashlib.sha256(f"{transversal_image_url}{longitudinal_image_url}".encode()).hexdigest()
+            
             storage_path = f"3d_models/{hash_str}.glb"
             download_url = self.upload_to_firebase(glb_temp_path, storage_path)
             
             print(f"✓ Model uploaded: {download_url}")
 
             end_time = time.time()
-            print(f"\nTotal processing time: {end_time - start_time:.2f} seconds")
+            processing_time = end_time - start_time
+            print(f"\nTotal processing time: {processing_time:.2f} seconds")
             
-            # Return results
-            return {
+            # Prepare results
+            results = {
                 "success": True,
                 "glb_url": download_url,
                 "area_mm2": float(area_mm2),
                 "volume_mm3": float(vol_mm3),
-                "processing_time": float(end_time - start_time)
+                "processing_time": float(processing_time),
+                "transversal_image_url": transversal_image_url,
+                "longitudinal_image_url": longitudinal_image_url,
+                "base_t_mm": base_t_mm,
+                "base_l_mm": base_l_mm,
+                "h_mm": h_mm
             }
+            
+            # Save results to Firestore
+            self.upload_results(results, hash_str)
+            
+            # Return results
+            return results
             
         except Exception as e:
             print(f"Error during reconstruction: {str(e)}")
@@ -406,7 +445,13 @@ def main(use_defaults: bool = False):
     
     print_final_results(mesh_to_measure, base_t_mm, h_mm, base_l_mm, area_mm2, vol_mm3)
 
-    # 6) Decide which mesh to export based on configuration
+    # 6) Create anatomical markers
+    from .mesh_ops import create_anatomical_markers
+    markers = create_anatomical_markers(mesh_to_measure, marker_size=5)
+    print(f"\n=== ANATOMICAL MARKERS ===")
+    print(f"Created {len(markers)} markers: {', '.join(markers.keys())}")
+    
+    # 7) Decide which mesh to export based on configuration
     mesh_to_export = inter if EXPORT_SMOOTHED else inter_original
     
     # Apply additional visualization smoothing if exporting smoothed mesh and viz smoothing is enabled
@@ -419,7 +464,7 @@ def main(use_defaults: bool = False):
     if EXPORT_SMOOTHED and SMOOTH_FOR_VIZ:
         print(f"  (with additional visualization smoothing: {SMOOTH_ITERATIONS} iterations)")
 
-    # 6.1) Export to GLB if enabled
+    # 7.1) Export to GLB if enabled (with markers)
     if EXPORT_TO_GLB:
         glb_exporter = GLBExporter()
         vertices = mesh_to_export.points
@@ -429,13 +474,13 @@ def main(use_defaults: bool = False):
             faces = faces_array.reshape(n_faces, -1)[:, 1:]
         else:
             faces = np.array([])
-        success = glb_exporter.export_to_glb(vertices, faces, GLB_OUTPUT_FILENAME, EXPORT_SMOOTHED)
+        success = glb_exporter.export_to_glb(vertices, faces, GLB_OUTPUT_FILENAME, EXPORT_SMOOTHED, markers=markers)
         if success:
-            print(f"✓ Model exported to {GLB_OUTPUT_FILENAME}")
+            print(f"✓ Model with markers exported to {GLB_OUTPUT_FILENAME}")
 
-    # 7) Visualization 
+    # 8) Visualization 
     if ENABLE_VISUALIZATION:
-        visualize_results(mesh_T, mesh_L, inter, SMOOTH_FOR_VIZ, SMOOTH_ITERATIONS)
+        visualize_results(mesh_T, mesh_L, inter, SMOOTH_FOR_VIZ, SMOOTH_ITERATIONS, markers=markers)
         
     else:
         print("Visualization disabled by config")

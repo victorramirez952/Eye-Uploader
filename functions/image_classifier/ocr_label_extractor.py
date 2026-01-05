@@ -16,17 +16,31 @@ from tqdm import tqdm
 
 class OCRLabelExtractor:
     def __init__(self, sections=24, healthy_eye_folder="HealthyEye",
-                 sinister_eye_folder="SinisterEye", no_label_folder="NoLabel"):
+                 sinister_eye_folder="SinisterEye", no_label_folder="NoLabel", verbose=True):
         self.sections = sections
         self.healthy_eye_folder = healthy_eye_folder
         self.sinister_eye_folder = sinister_eye_folder
         self.no_label_folder = no_label_folder
+        self.verbose = verbose
 
-        # Initialize OCR reader
-        self.ocr_reader = easyocr.Reader(['en', 'es'], gpu=False)
+        # Detect GPU availability for OCR
+        gpu_available = self._check_gpu_available()
+        print(f"* OCR GPU {'enabled' if gpu_available else 'disabled'}")
+        
+        # Initialize OCR reader with GPU if available
+        self.ocr_reader = easyocr.Reader(['en', 'es'], gpu=gpu_available)
 
         # Setup output folders
         # self._setup_folders()
+
+    def _check_gpu_available(self):
+        """Check if GPU is available for TensorFlow/EasyOCR."""
+        try:
+            from tensorflow.config import list_physical_devices
+            gpus = list_physical_devices('GPU')
+            return len(gpus) > 0
+        except:
+            return False
 
     def _setup_folders(self):
         """Setup output folders for eye classification"""
@@ -135,8 +149,11 @@ class OCRLabelExtractor:
     def classify_images_with_ocr(self, image_paths, confidences_melanoma):
         """
         Classify images based on OCR labels and melanoma predictions.
-        Returns paths of original images classified as Affected Eye (melanoma).
+        Returns paths of images classified as Affected Eye (melanoma) with confidence > 0.5.
         Does not save images to disk.
+        
+        Note: image_paths and confidences_melanoma are already filtered by melanoma_classifier
+        to only include images with confidence > 0.5
         """
         if not image_paths:
             print("No images to classify with OCR")
@@ -192,36 +209,36 @@ class OCRLabelExtractor:
             affected_eye_images = []
 
             # Process all images and collect affected eye paths
-            with tqdm(image_paths, desc="Classifying images with OCR") as pbar:
-                for i, img_path in enumerate(pbar):
-                    filename = os.path.basename(img_path)
+            iterator = tqdm(image_paths, desc="Classifying images with OCR", disable=not self.verbose)
+            for i, img_path in enumerate(iterator):
+                filename = os.path.basename(img_path)
 
-                    # Extract OCR label for this image
-                    if filename in label_cache:
-                        current_ocr_label = label_cache[filename]
-                    else:
-                        try:
-                            with open(img_path, 'rb') as f:
-                                img_array = np.frombuffer(f.read(), dtype=np.uint8)
-                            current_img = cv2.imdecode(img_array, cv2.IMREAD_GRAYSCALE)
+                # Extract OCR label for this image
+                if filename in label_cache:
+                    current_ocr_label = label_cache[filename]
+                else:
+                    try:
+                        with open(img_path, 'rb') as f:
+                            img_array = np.frombuffer(f.read(), dtype=np.uint8)
+                        current_img = cv2.imdecode(img_array, cv2.IMREAD_GRAYSCALE)
 
-                            if current_img is not None:
-                                current_ocr_label = self.extract_label_optimized(current_img, valid_labels)
-                                label_cache[filename] = current_ocr_label
-                            else:
-                                current_ocr_label = "No Label"
-                        except Exception as e:
+                        if current_img is not None:
+                            current_ocr_label = self.extract_label_optimized(current_img, valid_labels)
+                            label_cache[filename] = current_ocr_label
+                        else:
                             current_ocr_label = "No Label"
+                    except Exception as e:
+                        current_ocr_label = "No Label"
 
-                    # Determine classification
-                    if current_ocr_label in valid_labels:
-                        image_classification = classification[current_ocr_label]
-                    else:
-                        image_classification = "NA"
+                # Determine classification
+                if current_ocr_label in valid_labels:
+                    image_classification = classification[current_ocr_label]
+                else:
+                    image_classification = "NA"
 
-                    # Add to affected eye list if classified as melanoma
-                    if image_classification == "melanoma":
-                        affected_eye_images.append(img_path)
+                # Add to affected eye list if classified as melanoma
+                if image_classification == "melanoma":
+                    affected_eye_images.append(img_path)
 
             print(f"\nAffected Eye images identified: {len(affected_eye_images)}")
             return affected_eye_images

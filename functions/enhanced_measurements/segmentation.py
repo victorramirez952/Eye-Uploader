@@ -13,6 +13,7 @@ def apply_mean_shift_to_crop(image, spatial_radius=21, color_radius=51):
     Returns:
         numpy.ndarray: Segmented image.
     """
+    # Convert grayscale to BGR if necessary
     if len(image.shape) == 2:
         image_bgr = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     else:

@@ -7,22 +7,69 @@ from firebase_admin import storage
 import os
 import math
 
+# Global variables for model
+model = None
+use_openvino = False
+
+
+def configure_gpu():
+    """Configure TensorFlow GPU settings with memory growth."""
+    try:
+        from tensorflow import config as tf_config
+        gpus = tf_config.list_physical_devices('GPU')
+        if gpus:
+            try:
+                # Enable memory growth for all GPUs
+                for gpu in gpus:
+                    tf_config.experimental.set_memory_growth(gpu, True)
+                logical_gpus = tf_config.list_logical_devices('GPU')
+                print(f"* GPU(s) detected and configured: {len(gpus)} Physical, {len(logical_gpus)} Logical")
+                return True
+            except RuntimeError as e:
+                print(f"* GPU configuration error: {e}")
+                return False
+        else:
+            print("* No GPU detected, using CPU")
+            return False
+    except Exception as e:
+        print(f"* Error configuring GPU: {e}")
+        return False
+
 
 
 
 # FUNCIONES
 # en load_keras_model() cambiar el path al modelo .keras
 def load_keras_model():
-    # Lazy load TensorFlow imports
-    from tensorflow.keras.models import load_model
-    
-    global model
+    global model, use_openvino
     print("* Loading model...")
+    
     # Use absolute path relative to this module file
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(script_dir, 'keras', 'model.keras')
+    
+    # Try OpenVINO model first, fallback to Keras
+    try:
+        import openvino as ov
+        xml_path = os.path.join(script_dir, 'keras', 'ecomodel_transfer_learning.xml')
+        if os.path.exists(xml_path):
+            print("* Loading OpenVINO model...")
+            core = ov.Core()
+            ov_model = core.read_model(xml_path)
+            model = core.compile_model(ov_model, "CPU")
+            use_openvino = True
+            print("* OpenVINO model loaded")
+            return
+    except ImportError:
+        print("* OpenVINO not available, falling back to Keras")
+    except Exception as e:
+        print(f"* Error loading OpenVINO model: {e}, falling back to Keras")
+    
+    # Fallback to Keras model
+    from tensorflow.keras.models import load_model
+    model_path = os.path.join(script_dir, 'keras', 'ecomodel_transfer_learning.keras')
     model = load_model(model_path, compile=False)
-    print("* Model loaded")
+    use_openvino = False
+    print("* Keras model loaded")
     
 def prepare_image(path):
     # Lazy load TensorFlow imports
@@ -34,8 +81,17 @@ def prepare_image(path):
     return img
 
 def predict(img):
-    keras_new_predictions = model.predict(img)
-    return keras_new_predictions
+    global model, use_openvino
+    if use_openvino:
+        # OpenVINO inference - use input index 0
+        output = model({0: img})
+        # Get the output tensor (first output)
+        prediction = list(output.values())[0]
+        return prediction
+    else:
+        # TensorFlow/Keras inference
+        keras_new_predictions = model.predict(img)
+        return keras_new_predictions
 
 def get_overlay(hash):
     original = cv2.imread("images/image.png")

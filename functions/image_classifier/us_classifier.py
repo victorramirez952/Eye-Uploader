@@ -10,15 +10,23 @@ import os
 import shutil
 import cv2
 import numpy as np
-import tensorflow as tf
 from tqdm import tqdm
+
+try:
+    import openvino as ov
+    OPENVINO_AVAILABLE = True
+except ImportError:
+    OPENVINO_AVAILABLE = False
+    print("Warning: OpenVINO not available. Falling back to TensorFlow/Keras.")
 
 
 class USClassifier:
-    def __init__(self, model_path, us_folder="USImages", non_us_folder="NonUS"):
+    def __init__(self, model_path, us_folder="USImages", non_us_folder="NonUS", verbose=True):
         self.model_path = model_path
         self.us_folder = us_folder
         self.non_us_folder = non_us_folder
+        self.use_openvino = OPENVINO_AVAILABLE
+        self.verbose = verbose
 
         # Load US classification model
         self.model = self._load_model()
@@ -27,9 +35,40 @@ class USClassifier:
         # self._setup_folders()
 
     def _load_model(self):
-        """Load the trained US classification model"""
+        """Load the trained US classification model (OpenVINO or TensorFlow)"""
         try:
-            model = tf.keras.models.load_model(self.model_path)
+            if self.use_openvino:
+                # Try OpenVINO first
+                try:
+                    # Change .keras extension to .xml for OpenVINO model
+                    if self.model_path.endswith('.keras'):
+                        openvino_model_path = self.model_path.replace('.keras', '.xml')
+                    else:
+                        openvino_model_path = self.model_path
+                    
+                    if not os.path.exists(openvino_model_path):
+                        print(f"OpenVINO model not found at {openvino_model_path}, falling back to Keras")
+                        self.use_openvino = False
+                    else:
+                        core = ov.Core()
+                        ov_model = core.read_model(openvino_model_path)
+                        compiled_model = core.compile_model(ov_model, 'CPU')
+                        print("US classifier loaded with OpenVINO")
+                        return compiled_model
+                except Exception as ov_error:
+                    print(f"OpenVINO loading failed: {ov_error}. Falling back to Keras.")
+                    self.use_openvino = False
+            
+            # Fallback to TensorFlow/Keras
+            from tensorflow import keras
+            keras_model_path = self.model_path.replace('.xml', '.keras') if self.model_path.endswith('.xml') else self.model_path
+            
+            if not os.path.exists(keras_model_path):
+                # Try original path if replacement didn't work
+                keras_model_path = self.model_path
+            
+            model = keras.models.load_model(keras_model_path)
+            print("US classifier loaded with TensorFlow/Keras")
             return model
         except Exception as e:
             print(f"Error loading US classification model: {e}")
@@ -94,10 +133,18 @@ class USClassifier:
             return None
 
     def classify_us_image(self, preprocessed_image):
-        """Classify image using the US classification model"""
+        """Classify image using the US classification model (OpenVINO or TensorFlow)"""
         try:
-            prediction = self.model.predict(preprocessed_image, verbose=0)
-            return (prediction > 0.5).astype(int)[0][0]
+            if self.use_openvino:
+                # OpenVINO inference - use input index 0
+                output = self.model({0: preprocessed_image})
+                # Get the output tensor (first output)
+                prediction = list(output.values())[0]
+                return (prediction > 0.5).astype(int)[0][0]
+            else:
+                # TensorFlow/Keras inference
+                prediction = self.model.predict(preprocessed_image, verbose=0)
+                return (prediction > 0.5).astype(int)[0][0]
         except Exception as e:
             print(f"Error classifying US image: {e}")
             return 0
@@ -109,18 +156,18 @@ class USClassifier:
         """
         us_images = []
 
-        with tqdm(image_paths, desc="Processing for US classification") as pbar:
-            for image_path in pbar:
-                # Preprocess image
-                preprocessed_image = self.preprocess_image_for_us_classification(image_path)
-                if preprocessed_image is None:
-                    continue
+        iterator = tqdm(image_paths, desc="Processing for US classification", disable=not self.verbose)
+        for image_path in iterator:
+            # Preprocess image
+            preprocessed_image = self.preprocess_image_for_us_classification(image_path)
+            if preprocessed_image is None:
+                continue
 
-                # Classify image
-                classification = self.classify_us_image(preprocessed_image)
+            # Classify image
+            classification = self.classify_us_image(preprocessed_image)
 
-                # If classified as ultrasound (1), add to US images
-                if classification == 1:
-                    us_images.append(image_path)
+            # If classified as ultrasound (1), add to US images
+            if classification == 1:
+                us_images.append(image_path)
 
         return us_images

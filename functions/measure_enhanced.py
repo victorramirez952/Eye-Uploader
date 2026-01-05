@@ -4,14 +4,14 @@ import os
 
 def measure(img_array, mm_per_pixel):
     """
-    Measure thickness in millimeters.
+    Measure thickness and basal diameter in millimeters.
     
     Args:
         img_array: Binary mask image as numpy array
         mm_per_pixel: Conversion factor from pixels to millimeters
         
     Returns:
-        float: Measured thickness in millimeters
+        dict: Dictionary with 'thickness' and 'basal_diameter' in millimeters
     """
     
     # Convert to grayscale if needed
@@ -121,19 +121,36 @@ def measure(img_array, mm_per_pixel):
             
             # Calculate perpendicular line length (height measurement)
             perp_length_pixels = np.linalg.norm(perp_end - perp_start)
+            
+            # Calculate basal diameter using rotated bounding box
+            # Get all white pixel coordinates
+            y_coords, x_coords = np.where(binary > 0)
+            mask_points = np.column_stack((x_coords, y_coords)).astype(np.float64)
+            
+            # Project all points onto both the perpendicular direction (height) and line direction (width)
+            # Width projections along line_direction (basal diameter)
+            width_projections = np.dot(mask_points, line_direction)
+            
+            # Basal diameter is the range of projections along the line direction
+            basal_diameter_pixels = np.max(width_projections) - np.min(width_projections)
     
     # Convert to millimeters
     perp_length_mm = round(perp_length_pixels * mm_per_pixel, 2)
-    return perp_length_mm
+    basal_diameter_mm = round(basal_diameter_pixels * mm_per_pixel, 2) if 'basal_diameter_pixels' in locals() else 0.0
+    
+    return {
+        'thickness': perp_length_mm,
+        'basal_diameter': basal_diameter_mm
+    }
 
-def visualize_measure(img_array, mm_per_pixel, thickness_mm):
+def visualize_measure(img_array, mm_per_pixel, measurements):
     """
     Visualize the measurement process with annotations
     
     Args:
         img_array: Binary mask image as numpy array
         mm_per_pixel: Conversion factor from pixels to millimeters
-        thickness_mm: Pre-calculated thickness in millimeters to display
+        measurements: Dictionary with 'thickness' and 'basal_diameter' in millimeters
     """
     OUTPUT_DIR = "tempImages"
     # Create output directory if it doesn't exist in the current directory
@@ -158,10 +175,19 @@ def visualize_measure(img_array, mm_per_pixel, thickness_mm):
     base_threshold_percent = 10
     base_threshold_pixels = (base_threshold_percent / 100.0) * img_width
     
+    # Draw blue asymptote line at rightmost x
+    cv2.line(img_color, (x_asymptote_right, 0), (x_asymptote_right, img_height - 1), (255, 0, 0), 2)
+    
+    # Store curve points for red curve visualization
+    curve_points = []
+    
     for y in range(img_height):
         t = y / img_height
         x_percent = ((1 - t) ** 2) * x_asymptote_percent + 2 * (1 - t) * t * 0.75 + (t ** 2) * x_asymptote_percent
         x_curve = x_percent * img_width
+        
+        # Store curve point
+        curve_points.append([int(x_curve), y])
         
         row_pixels = np.where(img_array[y, :] > 0)[0]
         
@@ -177,9 +203,17 @@ def visualize_measure(img_array, mm_per_pixel, thickness_mm):
             
             if nearest_distance <= threshold_pixels:
                 nearest_pixels.append([nearest_x, y])
-                cv2.circle(img_color, (nearest_x, y), 2, (0, 0, 255), -1)
+                cv2.circle(img_color, (nearest_x, y), 4, (0, 255, 0), -1)
+    
+    # Draw red Bezier curve
+    if len(curve_points) > 1:
+        curve_points = np.array(curve_points, dtype=np.int32)
+        cv2.polylines(img_color, [curve_points], isClosed=False, color=(0, 0, 255), thickness=2)
     
     cv2.imwrite(os.path.join(OUTPUT_DIR, "01_original_with_edge_line.png"), img_color)
+    
+    # Create clean image for final measurements without guide lines
+    img_clean = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
     
     if len(nearest_pixels) > 1:
         nearest_pixels = np.array(nearest_pixels, dtype=np.int32)
@@ -199,6 +233,8 @@ def visualize_measure(img_array, mm_per_pixel, thickness_mm):
             perp_direction = np.array([-line_direction[1], line_direction[0]])
             
             centroid_mask = np.array([np.mean(x_coords_mask), np.mean(y_coords_mask)])
+            
+            # Use img_clean for measurements without guide lines
             
             def trace_to_mask_edge(start_point, direction, binary_mask, max_distance):
                 step_size = 1.0
@@ -231,12 +267,53 @@ def visualize_measure(img_array, mm_per_pixel, thickness_mm):
             perp_start_int = tuple(perp_start.astype(int))
             perp_end_int = tuple(perp_end.astype(int))
             
-            cv2.line(img_color, perp_start_int, perp_end_int, (255, 255, 0), 2, lineType=cv2.LINE_AA)
-            cv2.circle(img_color, perp_start_int, 5, (255, 255, 0), -1)
-            cv2.circle(img_color, perp_end_int, 5, (255, 255, 0), -1)
+            # Draw thickness line (perpendicular) on clean image only
+            cv2.line(img_clean, perp_start_int, perp_end_int, (255, 255, 0), 2, lineType=cv2.LINE_AA)
+            cv2.circle(img_clean, perp_start_int, 5, (255, 255, 0), -1)
+            cv2.circle(img_clean, perp_end_int, 5, (255, 255, 0), -1)
             
-            text = f"Thickness: {thickness_mm} mm ({distance_pixels:.1f} px)"
-            cv2.putText(img_color, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
-                        0.7, (0, 255, 0), 2)
+            # Calculate and draw basal diameter line using rotated bounding box
+            y_coords, x_coords = np.where(img_array > 0)
+            mask_points = np.column_stack((x_coords, y_coords)).astype(np.float64)
+            
+            # Project points onto line_direction to find width extremes
+            width_projections = np.dot(mask_points, line_direction)
+            min_proj_val = np.min(width_projections)
+            max_proj_val = np.max(width_projections)
+            
+            # Find points closest to min and max projections
+            min_proj_idx = np.argmin(width_projections)
+            max_proj_idx = np.argmax(width_projections)
+            
+            # Construct basal diameter line along line_direction
+            # Find the center point along perpendicular direction
+            height_projections = np.dot(mask_points, perp_direction)
+            center_height = (np.min(height_projections) + np.max(height_projections)) / 2
+            
+            # Create points at min and max width with center height
+            basal_start_point = line_direction * min_proj_val + perp_direction * center_height
+            basal_end_point = line_direction * max_proj_val + perp_direction * center_height
+            basal_diameter_pixels = np.linalg.norm(basal_end_point - basal_start_point)
+            
+            basal_start_int = tuple(basal_start_point.astype(int))
+            basal_end_int = tuple(basal_end_point.astype(int))
+            
+            # Draw rotated bounding box
+            # Calculate the four corners of the rotated bounding box
+            min_height = np.min(height_projections)
+            max_height = np.max(height_projections)
+            
+            corner1 = line_direction * min_proj_val + perp_direction * min_height
+            corner2 = line_direction * max_proj_val + perp_direction * min_height
+            corner3 = line_direction * max_proj_val + perp_direction * max_height
+            corner4 = line_direction * min_proj_val + perp_direction * max_height
+            
+            corners = np.array([corner1, corner2, corner3, corner4], dtype=np.int32)
+            cv2.polylines(img_clean, [corners], isClosed=True, color=(0, 255, 255), thickness=2)
+            
+            # Draw basal diameter line (parallel to edge) on clean image only
+            cv2.line(img_clean, basal_start_int, basal_end_int, (0, 255, 255), 2, lineType=cv2.LINE_AA)
+            cv2.circle(img_clean, basal_start_int, 5, (0, 255, 255), -1)
+            cv2.circle(img_clean, basal_end_int, 5, (0, 255, 255), -1)
     
-    cv2.imwrite(os.path.join(OUTPUT_DIR, "02_final_with_measurement.png"), img_color)
+    cv2.imwrite(os.path.join(OUTPUT_DIR, "02_final_with_measurement.png"), img_clean)
